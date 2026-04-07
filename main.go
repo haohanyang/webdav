@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 
 	"golang.org/x/net/webdav"
 )
@@ -20,7 +21,7 @@ func main() {
 		log.Fatal("WEBDAV_USERNAME and WEBDAV_PASSWORD environment variables are required")
 	}
 
-	handler := &webdav.Handler{
+	webdavHandler := &webdav.Handler{
 		Prefix:     "/",
 		FileSystem: webdav.Dir(dir),
 		LockSystem: webdav.NewMemLS(),
@@ -38,7 +39,16 @@ func main() {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
-		handler.ServeHTTP(w, r)
+		if r.Method == http.MethodGet || r.Method == http.MethodHead {
+			info, err := os.Stat(filepath.Join(dir, r.URL.Path))
+			if err == nil && info.IsDir() {
+				r.Method = "PROPFIND"
+				if r.Header.Get("Depth") == "" {
+					r.Header.Set("Depth", "1")
+				}
+			}
+		}
+		webdavHandler.ServeHTTP(w, r)
 	})
 
 	addr := ":8080"
