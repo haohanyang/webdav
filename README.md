@@ -38,6 +38,22 @@ docker run -p 8080:8080 \
   <your-dockerhub-username>/webdav
 ```
 
+### Run with Docker Compose
+
+```yaml
+services:
+  webdav:
+    image: haohanyang/webdav
+    ports:
+      - 8080:8080
+    environment:
+      WEBDAV_DIR: /data
+      WEBDAV_USERNAME: admin
+      WEBDAV_PASSWORD: admin
+    volumes:
+      - /path/to/my/data:/data
+```
+
 ## Building
 
 ```bash
