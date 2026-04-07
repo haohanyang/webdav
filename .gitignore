@@ -1,0 +1,12 @@
+# Binary
+webdav
+webdav.exe
+
+# Environment
+.env
+
+# IDE
+.vscode/
+.idea/
+
+testdir/
