@@ -15,9 +15,11 @@ func main() {
 		log.Fatal("WEBDAV_DIR environment variable is required")
 	}
 
+	noAuth := os.Getenv("WEBDAV_NO_AUTH") != ""
+
 	username := os.Getenv("WEBDAV_USERNAME")
 	password := os.Getenv("WEBDAV_PASSWORD")
-	if username == "" || password == "" {
+	if !noAuth && (username == "" || password == "") {
 		log.Fatal("WEBDAV_USERNAME and WEBDAV_PASSWORD environment variables are required")
 	}
 
@@ -33,11 +35,13 @@ func main() {
 	}
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		u, p, ok := r.BasicAuth()
-		if !ok || u != username || p != password {
-			w.Header().Set("WWW-Authenticate", `Basic realm="WebDAV"`)
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
+		if !noAuth {
+			u, p, ok := r.BasicAuth()
+			if !ok || u != username || p != password {
+				w.Header().Set("WWW-Authenticate", `Basic realm="WebDAV"`)
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
 		}
 		if r.Method == http.MethodGet || r.Method == http.MethodHead {
 			info, err := os.Stat(filepath.Join(dir, r.URL.Path))
