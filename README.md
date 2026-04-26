@@ -1,6 +1,6 @@
 # WebDAV Server
 
-A minimal WebDAV server written in Go. Serves a local directory over WebDAV with optional HTTP Basic Authentication.
+A minimal WebDAV server.
 
 ![](static/screenshot.png)
 
@@ -64,20 +64,4 @@ services:
       # WEBDAV_NO_AUTH: "true"  # uncomment to disable authentication
     volumes:
       - /path/to/my/data:/data
-```
-
-## Building
-
-```bash
-go build -o webdav .
-```
-
-## Docker
-
-A multi-stage Dockerfile is included. The workflow in [.github/workflows/docker-publish.yml](.github/workflows/docker-publish.yml) publishes the image to Docker Hub on manual trigger with a specified tag.
-
-To build locally:
-
-```bash
-docker build -t webdav .
 ```
