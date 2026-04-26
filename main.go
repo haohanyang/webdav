@@ -5,6 +5,7 @@ import (
 	"golang.org/x/net/webdav"
 	"html/template"
 	"log"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -37,6 +38,7 @@ const dirTemplate = `<!DOCTYPE html>
       <thead>
         <tr class="border-b border-gray-200 bg-gray-50">
           <th class="text-left px-5 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Name</th>
+          <th class="text-left px-5 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">MIME Type</th>
           <th class="text-left px-5 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Modified</th>
           <th class="text-right px-5 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Size</th>
         </tr>
@@ -45,7 +47,7 @@ const dirTemplate = `<!DOCTYPE html>
 
         {{if ne .Path "/"}}
         <tr class="hover:bg-blue-50 transition-colors">
-          <td class="px-5 py-3" colspan="3">
+          <td class="px-5 py-3" colspan="4">
             <a href="../" class="flex items-center gap-2 text-gray-500 hover:text-blue-600 font-mono">
               <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
               ..
@@ -69,6 +71,7 @@ const dirTemplate = `<!DOCTYPE html>
             </a>
             {{end}}
           </td>
+          <td class="px-5 py-3 text-gray-400 whitespace-nowrap font-mono text-xs">{{.MimeType}}</td>
           <td class="px-5 py-3 text-gray-400 tabular-nums whitespace-nowrap">{{.ModTime}}</td>
           <td class="px-5 py-3 text-right text-gray-400 tabular-nums whitespace-nowrap">
             {{if .IsDir}}<span class="text-gray-300">&mdash;</span>{{else}}{{.HumanSize}}{{end}}
@@ -93,6 +96,7 @@ type dirEntry struct {
 	IsDir     bool
 	ModTime   string
 	HumanSize string
+	MimeType  string
 }
 
 func humanSize(n int64) string {
@@ -129,6 +133,7 @@ func serveIndex(w http.ResponseWriter, fsRoot, urlPath string) {
 		}
 		if !info.IsDir() {
 			e.HumanSize = humanSize(fi.Size())
+			e.MimeType = mime.TypeByExtension(strings.ToLower(filepath.Ext(info.Name())))
 		}
 		if info.IsDir() {
 			dirs = append(dirs, e)
