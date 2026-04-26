@@ -1,4 +1,4 @@
-module webdav
+module github.com/haohanyang/webdav
 
 go 1.25.5
 
