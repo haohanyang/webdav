@@ -2,6 +2,8 @@
 
 A minimal WebDAV server written in Go. Serves a local directory over WebDAV with optional HTTP Basic Authentication.
 
+![](static/screenshot.png)
+
 ## Features
 
 - WebDAV protocol support (PROPFIND, GET, PUT, DELETE, MKCOL, COPY, MOVE, etc.)
@@ -13,12 +15,12 @@ A minimal WebDAV server written in Go. Serves a local directory over WebDAV with
 
 ### Environment Variables
 
-| Variable          | Required | Description                                              |
-| ----------------- | -------- | -------------------------------------------------------- |
-| `WEBDAV_DIR`      | Yes      | Path to the directory to serve                           |
-| `WEBDAV_USERNAME` | No*      | Basic auth username                                      |
-| `WEBDAV_PASSWORD` | No*      | Basic auth password                                      |
-| `WEBDAV_NO_AUTH`  | No       | Set to any value to disable authentication               |
+| Variable          | Required | Description                                |
+| ----------------- | -------- | ------------------------------------------ |
+| `WEBDAV_DIR`      | Yes      | Path to the directory to serve             |
+| `WEBDAV_USERNAME` | No\*     | Basic auth username                        |
+| `WEBDAV_PASSWORD` | No\*     | Basic auth password                        |
+| `WEBDAV_NO_AUTH`  | No       | Set to any value to disable authentication |
 
 \* Required unless `WEBDAV_NO_AUTH` is set.
 

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Docker image tag (e.g. v1.0.0)"
+        description: "Docker image tag (e.g. 1.0.0)"
         required: true
 
 jobs:
