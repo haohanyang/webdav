@@ -28,9 +28,18 @@ import (
 var dirTemplate string
 
 //go:embed login.html
-var loginPage string
+var loginHTML string
 
-var tmpl = template.Must(template.New("dir").Parse(dirTemplate))
+var (
+	tmpl      = template.Must(template.New("dir").Parse(dirTemplate))
+	loginTmpl = template.Must(template.New("login").Parse(loginHTML))
+)
+
+type loginData struct {
+	ShowOIDC  bool
+	ShowBasic bool
+	Error     string
+}
 
 type dirEntry struct {
 	Name      string
@@ -111,12 +120,13 @@ const (
 )
 
 type sessionData struct {
-	Id      string
-	Email   string
-	Name    string
-	Picture string
-	IDToken string
-	Expires time.Time
+	Id          string
+	Email       string
+	Name        string
+	Picture     string
+	IDToken     string
+	IsBasicAuth bool
+	Expires     time.Time
 }
 
 type sessionStore struct {
@@ -146,6 +156,16 @@ func (s *sessionStore) get(token string) (sessionData, bool) {
 		return sessionData{}, false
 	}
 	return sd, true
+}
+
+func (s *sessionStore) createBasic(username string) string {
+	b := make([]byte, 32)
+	rand.Read(b)
+	token := base64.URLEncoding.EncodeToString(b)
+	s.mu.Lock()
+	s.data[token] = sessionData{Id: username, Name: username, IsBasicAuth: true, Expires: time.Now().Add(sessionDuration)}
+	s.mu.Unlock()
+	return token
 }
 
 func (s *sessionStore) delete(token string) {
@@ -233,12 +253,17 @@ func (cfg *appConfig) checkOIDCSession(w http.ResponseWriter, r *http.Request) (
 		return nil, false
 	}
 
-	if !cfg.idWhitelist[sd.Id] && !cfg.emailWhitelist[sd.Email] {
+	if !sd.IsBasicAuth && !cfg.idWhitelist[sd.Id] && !cfg.emailWhitelist[sd.Email] {
 		http.Error(w, "Unauthorized", http.StatusForbidden)
 		return nil, false
 	}
 
-	user := templateUser{Email: sd.Email, Name: sd.Name, Picture: sd.Picture, Initial: emailInitial(sd.Email)}
+	initial := emailInitial(sd.Email)
+	if sd.Email == "" {
+		r, _ := utf8.DecodeRuneInString(sd.Name)
+		initial = strings.ToUpper(string(r))
+	}
+	user := templateUser{Email: sd.Email, Name: sd.Name, Picture: sd.Picture, Initial: initial}
 	return r.WithContext(context.WithValue(r.Context(), ctxUser{}, user)), true
 }
 
@@ -370,9 +395,38 @@ func (cfg *appConfig) handleLogout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/auth/sign-in", http.StatusFound)
 }
 
-func handleSignIn(w http.ResponseWriter, _ *http.Request) {
+func (cfg *appConfig) handleSignIn(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, loginPage)
+	loginTmpl.Execute(w, loginData{
+		ShowOIDC:  cfg.mode == authOIDC || cfg.mode == authBoth,
+		ShowBasic: cfg.mode == authBoth,
+		Error:     r.URL.Query().Get("error"),
+	})
+}
+
+func (cfg *appConfig) handleBasicSignIn(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Redirect(w, r, "/auth/sign-in", http.StatusSeeOther)
+		return
+	}
+	if r.FormValue("username") != cfg.username || r.FormValue("password") != cfg.password {
+		http.Redirect(w, r, "/auth/sign-in?error=Invalid+username+or+password", http.StatusSeeOther)
+		return
+	}
+	token := cfg.sessions.createBasic(cfg.username)
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		MaxAge:   int(sessionDuration.Seconds()),
+	})
+	next := "/"
+	if c, err := r.Cookie("oauth_next"); err == nil && strings.HasPrefix(c.Value, "/") {
+		next = c.Value
+		http.SetCookie(w, &http.Cookie{Name: "oauth_next", MaxAge: -1, Path: "/"})
+	}
+	http.Redirect(w, r, next, http.StatusSeeOther)
 }
 
 // ---- main ----
@@ -470,11 +524,13 @@ func main() {
 	}
 
 	if cfg.mode == authOIDC || cfg.mode == authBoth {
+		http.HandleFunc("/auth/sign-in", cfg.handleSignIn)
 		http.HandleFunc("/auth/login", cfg.handleLogin)
 		http.HandleFunc("/auth/callback", cfg.handleCallback)
-		http.HandleFunc("/auth/sign-in", handleSignIn)
 		http.HandleFunc("/auth/logout", cfg.handleLogout)
-
+		if cfg.mode == authBoth {
+			http.HandleFunc("/auth/basic-sign-in", cfg.handleBasicSignIn)
+		}
 	}
 
 	http.HandleFunc("/", cfg.authMiddleware(func(w http.ResponseWriter, r *http.Request) {

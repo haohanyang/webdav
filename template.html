@@ -10,7 +10,7 @@
 </head>
 <body class="bg-gray-50 min-h-screen text-gray-800">
 
-{{if .User.Email}}
+{{if .User.Initial}}
 <header class="sticky top-0 z-10 bg-white border-b border-gray-200 shadow-sm">
   <div class="max-w-5xl mx-auto px-4 h-12 flex items-center justify-end">
     <div class="relative" id="user-menu">
@@ -34,7 +34,7 @@
           {{end}}
           <div class="min-w-0">
             {{if .User.Name}}<p class="text-sm font-medium text-gray-800 truncate">{{.User.Name}}</p>{{end}}
-            <p class="text-xs text-gray-500 truncate">{{.User.Email}}</p>
+            {{if .User.Email}}<p class="text-xs text-gray-500 truncate">{{.User.Email}}</p>{{end}}
           </div>
         </div>
         <form method="POST" action="/auth/logout">
