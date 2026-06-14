@@ -21,6 +21,7 @@ import (
 	"golang.org/x/net/webdav"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
+	"google.golang.org/api/idtoken"
 )
 
 const dirTemplate = `<!DOCTYPE html>
@@ -535,6 +536,18 @@ func (cfg *appConfig) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	rawIDToken, _ := token.Extra("id_token").(string)
+	if rawIDToken == "" {
+		http.Error(w, "ID token missing from token response", http.StatusInternalServerError)
+		return
+	}
+
+	if _, err := idtoken.Validate(context.Background(), rawIDToken, cfg.oauth2Cfg.ClientID); err != nil {
+		http.Error(w, "ID token verification failed", http.StatusUnauthorized)
+		log.Printf("OIDC ID token verification: %v", err)
+		return
+	}
+
 	client := cfg.oauth2Cfg.Client(context.Background(), token)
 	resp, err := client.Get("https://www.googleapis.com/oauth2/v2/userinfo")
 	if err != nil {
@@ -623,7 +636,7 @@ func main() {
 			log.Fatal("WEBDAV_GOOGLE_REDIRECT_URL is required when using Google OIDC (e.g. http://localhost:8080/auth/callback)")
 		}
 		cfg.emailWhitelist = make(map[string]bool)
-		for _, e := range strings.Split(emailWhitelistStr, ",") {
+		for e := range strings.SplitSeq(emailWhitelistStr, ",") {
 			if e = strings.TrimSpace(e); e != "" {
 				cfg.emailWhitelist[e] = true
 			}
