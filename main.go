@@ -79,9 +79,19 @@ const dirTemplate = `<!DOCTYPE html>
 <div class="max-w-5xl mx-auto px-4 py-10">
 
   <!-- Header -->
-  <div class="mb-6">
-    <p class="text-xs font-semibold uppercase tracking-widest text-gray-400 mb-1">File Browser</p>
-    <h1 class="text-2xl font-bold text-gray-900 break-all font-mono">{{.Path}}</h1>
+  <div class="mb-6 flex items-end justify-between gap-4">
+    <div>
+      <p class="text-xs font-semibold uppercase tracking-widest text-gray-400 mb-1">File Browser</p>
+      <h1 class="text-2xl font-bold text-gray-900 break-all font-mono">{{.Path}}</h1>
+    </div>
+    <div class="shrink-0">
+      <button id="upload-btn"
+              class="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 active:bg-blue-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5"/></svg>
+        Upload
+      </button>
+      <input id="upload-input" type="file" multiple class="hidden">
+    </div>
   </div>
 
   <!-- Card -->
@@ -93,13 +103,14 @@ const dirTemplate = `<!DOCTYPE html>
           <th class="text-left px-5 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">MIME Type</th>
           <th class="text-left px-5 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Modified</th>
           <th class="text-right px-5 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Size</th>
+          <th class="w-10 px-3 py-3"></th>
         </tr>
       </thead>
       <tbody class="divide-y divide-gray-100">
 
         {{if ne .Path "/"}}
         <tr class="hover:bg-blue-50 transition-colors">
-          <td class="px-5 py-3" colspan="4">
+          <td class="px-5 py-3" colspan="5">
             <a href="../" class="flex items-center gap-2 text-gray-500 hover:text-blue-600 font-mono">
               <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
               ..
@@ -128,12 +139,111 @@ const dirTemplate = `<!DOCTYPE html>
           <td class="px-5 py-3 text-right text-gray-400 tabular-nums whitespace-nowrap">
             {{if .IsDir}}<span class="text-gray-300">&mdash;</span>{{else}}{{.HumanSize}}{{end}}
           </td>
+          <td class="px-3 py-3 text-right">
+            <button class="action-btn opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-gray-200 text-gray-400 hover:text-gray-600"
+                    data-name="{{.Name}}" data-url="{{.Name}}{{if .IsDir}}/{{end}}" aria-label="Actions">
+              <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M10 6a2 2 0 110-4 2 2 0 010 4zm0 6a2 2 0 110-4 2 2 0 010 4zm0 6a2 2 0 110-4 2 2 0 010 4z"/></svg>
+            </button>
+          </td>
         </tr>
         {{end}}
 
       </tbody>
     </table>
   </div>
+
+  <!-- Shared action dropdown -->
+  <div id="action-dropdown" class="hidden fixed bg-white rounded-xl shadow-lg border border-gray-200 py-1 z-30 w-36">
+    <button id="action-rename"
+            class="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors">
+      <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487zm0 0L19.5 7.125"/></svg>
+      Rename
+    </button>
+    <button id="action-delete"
+            class="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors">
+      <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"/></svg>
+      Delete
+    </button>
+  </div>
+  <script>
+  (function(){
+    var dropdown = document.getElementById('action-dropdown');
+    var currentName = null, currentUrl = null;
+
+    document.querySelectorAll('.action-btn').forEach(function(btn) {
+      btn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        currentName = btn.dataset.name;
+        currentUrl  = btn.dataset.url;
+        var rect = btn.getBoundingClientRect();
+        dropdown.style.top  = (rect.bottom + window.scrollY + 4) + 'px';
+        dropdown.style.left = Math.min(rect.left, window.innerWidth - 160) + 'px';
+        dropdown.classList.remove('hidden');
+      });
+    });
+
+    document.getElementById('action-rename').addEventListener('click', function() {
+      dropdown.classList.add('hidden');
+      if (!currentUrl) return;
+      var newName = prompt('Rename "' + currentName + '" to:', currentName);
+      if (!newName || newName === currentName) return;
+      var base = window.location.pathname;
+      if (!base.endsWith('/')) base += '/';
+      var dest = window.location.origin + base + encodeURIComponent(newName);
+      fetch(currentUrl, {method: 'MOVE', credentials: 'same-origin', headers: {Destination: dest, Overwrite: 'F'}})
+        .then(function(r) {
+          if (r.ok) { location.reload(); }
+          else { alert('Rename failed: ' + r.status + ' ' + r.statusText); }
+        })
+        .catch(function(err) { alert('Rename failed: ' + err); });
+    });
+
+    document.getElementById('action-delete').addEventListener('click', function() {
+      dropdown.classList.add('hidden');
+      if (!currentUrl) return;
+      if (!confirm('Delete "' + currentName + '"?')) return;
+      fetch(currentUrl, {method: 'DELETE', credentials: 'same-origin'})
+        .then(function(r) {
+          if (r.ok) { location.reload(); }
+          else { alert('Delete failed: ' + r.status + ' ' + r.statusText); }
+        })
+        .catch(function(err) { alert('Delete failed: ' + err); });
+    });
+
+    document.addEventListener('click', function() { dropdown.classList.add('hidden'); });
+  })();
+  </script>
+  <script>
+  (function(){
+    var btn   = document.getElementById('upload-btn');
+    var input = document.getElementById('upload-input');
+    btn.addEventListener('click', function() { input.click(); });
+    input.addEventListener('change', function() {
+      var files = Array.from(input.files);
+      if (!files.length) return;
+      var base = window.location.pathname;
+      if (!base.endsWith('/')) base += '/';
+      btn.disabled = true;
+      var done = 0;
+      function label() { btn.textContent = 'Uploading ' + done + '/' + files.length + '…'; }
+      label();
+      Promise.all(files.map(function(f) {
+        return fetch(base + encodeURIComponent(f.name), {method: 'PUT', credentials: 'same-origin', body: f})
+          .then(function(r) {
+            if (!r.ok) throw new Error('"' + f.name + '" failed: ' + r.status + ' ' + r.statusText);
+            done++; label();
+          });
+      })).then(function() {
+        location.reload();
+      }).catch(function(err) {
+        alert('Upload failed: ' + err);
+        btn.disabled = false;
+        btn.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5"/></svg> Upload';
+        input.value = '';
+      });
+    });
+  })();
+  </script>
 
   <div class="mt-4 flex items-center justify-end gap-2 text-xs text-gray-400">
     <span>WebDAV File Server</span>
@@ -494,7 +604,7 @@ func main() {
 	case hasBasic:
 		cfg.mode = authBasic
 	default:
-		log.Fatal("no auth mode configured: set WEBDAV_NO_AUTH=true, WEBDAV_USERNAME+WEBDAV_PASSWORD, or WEBDAV_GOOGLE_CLIENT_ID+WEBDAV_GOOGLE_CLIENT_SECRET")
+		log.Fatal("no auth mode configured: set WEBDAV_NO_AUTH=true, or basic auth/OIDC credentials")
 	}
 
 	if hasBasic {
