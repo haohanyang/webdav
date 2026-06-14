@@ -267,6 +267,10 @@ func (cfg *appConfig) checkOIDCSession(w http.ResponseWriter, r *http.Request) (
 	return r.WithContext(context.WithValue(r.Context(), ctxUser{}, user)), true
 }
 
+func isBrowser(r *http.Request) bool {
+	return strings.Contains(r.UserAgent(), "Mozilla/")
+}
+
 func (cfg *appConfig) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch cfg.mode {
@@ -289,8 +293,9 @@ func (cfg *appConfig) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			next(w, r2)
 
 		case authBoth:
-			// WebDAV clients send Basic credentials; browsers going through OIDC don't.
-			if _, _, hasBasic := r.BasicAuth(); hasBasic {
+			// Use User-Agent to distinguish browsers (OIDC) from WebDAV clients (Basic).
+			// Browsers all include "Mozilla/" in their UA; WebDAV clients typically don't.
+			if !isBrowser(r) {
 				if !cfg.checkBasicAuth(r) {
 					w.Header().Set("WWW-Authenticate", `Basic realm="WebDAV"`)
 					http.Error(w, "Unauthorized", http.StatusUnauthorized)
