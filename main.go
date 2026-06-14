@@ -27,7 +27,6 @@ import (
 
 //go:embed template.html
 var dirTemplate string
-
 
 var tmpl = template.Must(template.New("dir").Parse(dirTemplate))
 
@@ -337,6 +336,10 @@ func (cfg *appConfig) handleCallback(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
 		http.Error(w, "Failed to decode user info", http.StatusInternalServerError)
 		return
+	}
+
+	if !info.EmailVerified {
+		http.Error(w, "Unauthorized: user must have email verified", http.StatusForbidden)
 	}
 
 	if !cfg.emailWhitelist[info.Email] && !cfg.idWhitelist[info.Id] {
