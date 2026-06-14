@@ -20,7 +20,6 @@ import (
 
 	"golang.org/x/net/webdav"
 	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/google"
 )
 
 const dirTemplate = `<!DOCTYPE html>
@@ -311,6 +310,7 @@ type appConfig struct {
 	username       string
 	password       string
 	oauth2Cfg      *oauth2.Config
+	userInfoURL    string
 	emailWhitelist map[string]bool
 	sessions       *sessionStore
 }
@@ -399,11 +399,6 @@ func (cfg *appConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, cfg.oauth2Cfg.AuthCodeURL(state), http.StatusFound)
 }
 
-type googleUserInfo struct {
-	Email   string `json:"email"`
-	Picture string `json:"picture"`
-}
-
 func (cfg *appConfig) handleCallback(w http.ResponseWriter, r *http.Request) {
 	stateCookie, err := r.Cookie("oauth_state")
 	if err != nil || stateCookie.Value != r.URL.Query().Get("state") {
@@ -420,14 +415,17 @@ func (cfg *appConfig) handleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	client := cfg.oauth2Cfg.Client(context.Background(), token)
-	resp, err := client.Get("https://www.googleapis.com/oauth2/v2/userinfo")
+	resp, err := client.Get(cfg.userInfoURL)
 	if err != nil {
 		http.Error(w, "Failed to fetch user info", http.StatusInternalServerError)
 		return
 	}
 	defer resp.Body.Close()
 
-	var info googleUserInfo
+	var info struct {
+		Email   string `json:"email"`
+		Picture string `json:"picture"`
+	}
 	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
 		http.Error(w, "Failed to decode user info", http.StatusInternalServerError)
 		return
@@ -463,6 +461,34 @@ func (cfg *appConfig) handleLogout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
+// ---- OIDC discovery ----
+
+type oidcDiscovery struct {
+	AuthURL     string `json:"authorization_endpoint"`
+	TokenURL    string `json:"token_endpoint"`
+	UserInfoURL string `json:"userinfo_endpoint"`
+}
+
+func fetchOIDCDiscovery(issuer string) (*oidcDiscovery, error) {
+	url := strings.TrimRight(issuer, "/") + "/.well-known/openid-configuration"
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("discovery endpoint returned %s", resp.Status)
+	}
+	var d oidcDiscovery
+	if err := json.NewDecoder(resp.Body).Decode(&d); err != nil {
+		return nil, err
+	}
+	if d.AuthURL == "" || d.TokenURL == "" || d.UserInfoURL == "" {
+		return nil, fmt.Errorf("discovery document missing required endpoints")
+	}
+	return &d, nil
+}
+
 // ---- main ----
 
 func main() {
@@ -474,13 +500,14 @@ func main() {
 	noAuth := os.Getenv("WEBDAV_NO_AUTH") != ""
 	username := os.Getenv("WEBDAV_USERNAME")
 	password := os.Getenv("WEBDAV_PASSWORD")
-	clientID := os.Getenv("WEBDAV_GOOGLE_CLIENT_ID")
-	clientSecret := os.Getenv("WEBDAV_GOOGLE_CLIENT_SECRET")
-	redirectURL := os.Getenv("WEBDAV_GOOGLE_REDIRECT_URL")
+	issuerURL := os.Getenv("WEBDAV_OIDC_ISSUER")
+	clientID := os.Getenv("WEBDAV_OIDC_CLIENT_ID")
+	clientSecret := os.Getenv("WEBDAV_OIDC_CLIENT_SECRET")
+	redirectURL := os.Getenv("WEBDAV_OIDC_REDIRECT_URL")
 	emailWhitelistStr := os.Getenv("WEBDAV_EMAIL_WHITELIST")
 
 	hasBasic := username != "" && password != ""
-	hasOIDC := clientID != "" && clientSecret != ""
+	hasOIDC := issuerURL != "" && clientID != "" && clientSecret != ""
 
 	cfg := &appConfig{dir: dir}
 
@@ -494,7 +521,7 @@ func main() {
 	case hasBasic:
 		cfg.mode = authBasic
 	default:
-		log.Fatal("no auth mode configured: set WEBDAV_NO_AUTH=true, WEBDAV_USERNAME+WEBDAV_PASSWORD, or WEBDAV_GOOGLE_CLIENT_ID+WEBDAV_GOOGLE_CLIENT_SECRET")
+		log.Fatal("no auth mode configured: set WEBDAV_NO_AUTH=true, WEBDAV_USERNAME+WEBDAV_PASSWORD, or WEBDAV_OIDC_ISSUER+WEBDAV_OIDC_CLIENT_ID+WEBDAV_OIDC_CLIENT_SECRET")
 	}
 
 	if hasBasic {
@@ -504,7 +531,7 @@ func main() {
 
 	if hasOIDC {
 		if redirectURL == "" {
-			log.Fatal("WEBDAV_GOOGLE_REDIRECT_URL is required when using Google OIDC (e.g. http://localhost:8080/auth/callback)")
+			log.Fatal("WEBDAV_OIDC_REDIRECT_URL is required when using OIDC (e.g. http://localhost:8080/auth/callback)")
 		}
 		cfg.emailWhitelist = make(map[string]bool)
 		for _, e := range strings.Split(emailWhitelistStr, ",") {
@@ -513,15 +540,27 @@ func main() {
 			}
 		}
 		if len(cfg.emailWhitelist) == 0 {
-			log.Fatal("WEBDAV_EMAIL_WHITELIST is required when using Google OIDC (comma-separated emails)")
+			log.Fatal("WEBDAV_EMAIL_WHITELIST is required when using OIDC (comma-separated emails)")
 		}
+
+		// Fetch OIDC discovery document to get endpoints.
+		discovery, err := fetchOIDCDiscovery(issuerURL)
+		if err != nil {
+			log.Fatalf("OIDC discovery failed for %s: %v", issuerURL, err)
+		}
+		log.Printf("OIDC provider: issuer=%s", issuerURL)
+
+		cfg.userInfoURL = discovery.UserInfoURL
 		cfg.sessions = newSessionStore()
 		cfg.oauth2Cfg = &oauth2.Config{
 			ClientID:     clientID,
 			ClientSecret: clientSecret,
 			RedirectURL:  redirectURL,
-			Scopes:       []string{"https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/userinfo.profile"},
-			Endpoint:     google.Endpoint,
+			Scopes:       []string{"openid", "email", "profile"},
+			Endpoint: oauth2.Endpoint{
+				AuthURL:  discovery.AuthURL,
+				TokenURL: discovery.TokenURL,
+			},
 		}
 	}
 
