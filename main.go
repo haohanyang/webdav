@@ -344,6 +344,7 @@ const (
 )
 
 type sessionData struct {
+	Id      string
 	Email   string
 	Name    string
 	Picture string
@@ -359,12 +360,12 @@ func newSessionStore() *sessionStore {
 	return &sessionStore{data: make(map[string]sessionData)}
 }
 
-func (s *sessionStore) create(email, name, picture string) string {
+func (s *sessionStore) create(id, email, name, picture string) string {
 	b := make([]byte, 32)
 	rand.Read(b)
 	token := base64.URLEncoding.EncodeToString(b)
 	s.mu.Lock()
-	s.data[token] = sessionData{Email: email, Name: name, Picture: picture, Expires: time.Now().Add(sessionDuration)}
+	s.data[token] = sessionData{Id: id, Email: email, Name: name, Picture: picture, Expires: time.Now().Add(sessionDuration)}
 	s.mu.Unlock()
 	return token
 }
@@ -431,6 +432,7 @@ type appConfig struct {
 	password       string
 	oauth2Cfg      *oauth2.Config
 	emailWhitelist map[string]bool
+	idWhitelist    map[string]bool
 	sessions       *sessionStore
 }
 
@@ -461,10 +463,12 @@ func (cfg *appConfig) checkOIDCSession(w http.ResponseWriter, r *http.Request) (
 		http.Redirect(w, r, "/auth/login", http.StatusFound)
 		return nil, false
 	}
-	if !cfg.emailWhitelist[sd.Email] {
-		http.Error(w, "Forbidden: "+sd.Email+" is not on the whitelist", http.StatusForbidden)
+
+	if !cfg.idWhitelist[sd.Id] && !cfg.emailWhitelist[sd.Email] {
+		http.Error(w, "Unauthorized", http.StatusForbidden)
 		return nil, false
 	}
+
 	user := templateUser{Email: sd.Email, Name: sd.Name, Picture: sd.Picture, Initial: emailInitial(sd.Email)}
 	return r.WithContext(context.WithValue(r.Context(), ctxUser{}, user)), true
 }
@@ -569,12 +573,12 @@ func (cfg *appConfig) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !cfg.emailWhitelist[info.Email] {
+	if !cfg.emailWhitelist[info.Email] && !cfg.idWhitelist[info.Id] {
 		http.Error(w, "Unauthorized", http.StatusForbidden)
 		return
 	}
 
-	sessionToken := cfg.sessions.create(info.Email, info.Name, info.Picture)
+	sessionToken := cfg.sessions.create(info.Id, info.Email, info.Name, info.Picture)
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    sessionToken,
@@ -618,6 +622,7 @@ func main() {
 	clientSecret := os.Getenv("WEBDAV_GOOGLE_CLIENT_SECRET")
 	redirectURL := os.Getenv("WEBDAV_GOOGLE_REDIRECT_URL")
 	emailWhitelistStr := os.Getenv("WEBDAV_EMAIL_WHITELIST")
+	idWhitelistStr := os.Getenv("WEBDAV_ID_WHITELIST")
 
 	hasBasic := username != "" && password != ""
 	hasOIDC := clientID != "" && clientSecret != ""
@@ -652,8 +657,14 @@ func main() {
 				cfg.emailWhitelist[e] = true
 			}
 		}
-		if len(cfg.emailWhitelist) == 0 {
-			log.Fatal("WEBDAV_EMAIL_WHITELIST is required when using Google OIDC (comma-separated emails)")
+		cfg.idWhitelist = make(map[string]bool)
+		for id := range strings.SplitSeq(idWhitelistStr, ",") {
+			if id = strings.TrimSpace(id); id != "" {
+				cfg.idWhitelist[id] = true
+			}
+		}
+		if len(cfg.emailWhitelist) == 0 && len(cfg.idWhitelist) == 0 {
+			log.Fatal("WEBDAV_EMAIL_WHITELIST or WEBDAV_ID_WHITELIST is required when using Google OIDC")
 		}
 		cfg.sessions = newSessionStore()
 		cfg.oauth2Cfg = &oauth2.Config{
