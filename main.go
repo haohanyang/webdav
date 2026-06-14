@@ -30,6 +30,7 @@ const dirTemplate = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="description" content="WebDav Server">
 <title>Index of {{.Path}}</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/7.0.1/css/all.min.css" integrity="sha512-2SwdPD6INVrV/lHTZbO2nodKhrnDdJK9/kg2XD1r9uGqPo1cUbujc+IYdlYdEErWNu69gVcYgdxlmVmzTWnetw==" crossorigin="anonymous" referrerpolicy="no-referrer" />
 <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-50 min-h-screen text-gray-800">
@@ -510,8 +511,13 @@ func (cfg *appConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 type googleUserInfo struct {
-	Email   string `json:"email"`
-	Picture string `json:"picture"`
+	Id            string `json:"id"`
+	Email         string `json:"email"`
+	Name          string `json:"name"`
+	GivenName     string `json:"given_name"`
+	FamilyName    string `json:"family_name"`
+	Picture       string `json:"picture"`
+	EmailVerified bool   `json:"verified_email"`
 }
 
 func (cfg *appConfig) handleCallback(w http.ResponseWriter, r *http.Request) {
