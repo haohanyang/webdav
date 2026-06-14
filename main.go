@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
-	"golang.org/x/net/webdav"
 	"html/template"
 	"log"
 	"mime"
@@ -11,6 +14,13 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
+	"time"
+	"unicode/utf8"
+
+	"golang.org/x/net/webdav"
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
 )
 
 const dirTemplate = `<!DOCTYPE html>
@@ -23,6 +33,48 @@ const dirTemplate = `<!DOCTYPE html>
 <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-50 min-h-screen text-gray-800">
+
+{{if .User.Email}}
+<header class="sticky top-0 z-10 bg-white border-b border-gray-200 shadow-sm">
+  <div class="max-w-5xl mx-auto px-4 h-12 flex items-center justify-end">
+    <div class="relative" id="user-menu">
+      <button id="avatar-btn" type="button"
+              class="flex items-center gap-2 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">
+        {{if .User.Picture}}
+        <img src="{{.User.Picture}}" class="w-8 h-8 rounded-full select-none" alt="">
+        {{else}}
+        <span class="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center text-white text-sm font-semibold select-none">{{.User.Initial}}</span>
+        {{end}}
+        <svg class="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
+      </button>
+      <div id="user-dropdown"
+           class="hidden absolute right-0 mt-2 w-60 bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden z-20">
+        <div class="px-4 py-3 border-b border-gray-100 flex items-center gap-3">
+          {{if .User.Picture}}
+          <img src="{{.User.Picture}}" class="w-9 h-9 rounded-full shrink-0" alt="">
+          {{else}}
+          <span class="w-9 h-9 rounded-full bg-blue-500 flex items-center justify-center text-white text-sm font-semibold shrink-0">{{.User.Initial}}</span>
+          {{end}}
+          <span class="text-xs text-gray-600 truncate">{{.User.Email}}</span>
+        </div>
+        <a href="/auth/logout"
+           class="flex items-center gap-2 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors">
+          <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9"/></svg>
+          Sign out
+        </a>
+      </div>
+    </div>
+  </div>
+</header>
+<script>
+(function(){
+  var btn = document.getElementById('avatar-btn');
+  var dd  = document.getElementById('user-dropdown');
+  btn.addEventListener('click', function(e){ e.stopPropagation(); dd.classList.toggle('hidden'); });
+  document.addEventListener('click', function(){ dd.classList.add('hidden'); });
+})();
+</script>
+{{end}}
 
 <div class="max-w-5xl mx-auto px-4 py-10">
 
@@ -117,7 +169,14 @@ func humanSize(n int64) string {
 	}
 }
 
-func serveIndex(w http.ResponseWriter, fsRoot, urlPath string) {
+// templateUser holds the logged-in user data exposed to the HTML template.
+type templateUser struct {
+	Email   string
+	Picture string
+	Initial string // uppercase first rune of the email local-part
+}
+
+func serveIndex(w http.ResponseWriter, r *http.Request, fsRoot, urlPath string) {
 	fsPath := filepath.Join(fsRoot, filepath.FromSlash(urlPath))
 	infos, err := os.ReadDir(fsPath)
 	if err != nil {
@@ -149,12 +208,262 @@ func serveIndex(w http.ResponseWriter, fsRoot, urlPath string) {
 	sort.Slice(dirs, func(i, j int) bool { return strings.ToLower(dirs[i].Name) < strings.ToLower(dirs[j].Name) })
 	sort.Slice(files, func(i, j int) bool { return strings.ToLower(files[i].Name) < strings.ToLower(files[j].Name) })
 
+	user, _ := r.Context().Value(ctxUser{}).(templateUser)
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	tmpl.Execute(w, struct {
 		Path    string
 		Entries []dirEntry
-	}{urlPath, append(dirs, files...)})
+		User    templateUser
+	}{urlPath, append(dirs, files...), user})
 }
+
+// ---- session store ----
+
+const (
+	sessionCookieName = "webdav_session"
+	sessionDuration   = 24 * time.Hour
+)
+
+type sessionData struct {
+	Email   string
+	Picture string
+	Expires time.Time
+}
+
+type sessionStore struct {
+	mu   sync.RWMutex
+	data map[string]sessionData
+}
+
+func newSessionStore() *sessionStore {
+	return &sessionStore{data: make(map[string]sessionData)}
+}
+
+func (s *sessionStore) create(email, picture string) string {
+	b := make([]byte, 32)
+	rand.Read(b)
+	token := base64.URLEncoding.EncodeToString(b)
+	s.mu.Lock()
+	s.data[token] = sessionData{Email: email, Picture: picture, Expires: time.Now().Add(sessionDuration)}
+	s.mu.Unlock()
+	return token
+}
+
+func (s *sessionStore) get(token string) (sessionData, bool) {
+	s.mu.RLock()
+	sd, ok := s.data[token]
+	s.mu.RUnlock()
+	if !ok || time.Now().After(sd.Expires) {
+		return sessionData{}, false
+	}
+	return sd, true
+}
+
+func (s *sessionStore) delete(token string) {
+	s.mu.Lock()
+	delete(s.data, token)
+	s.mu.Unlock()
+}
+
+// ---- request context key ----
+
+type ctxUser struct{}
+
+func emailInitial(email string) string {
+	local := email
+	if i := strings.IndexByte(email, '@'); i > 0 {
+		local = email[:i]
+	}
+	r, _ := utf8.DecodeRuneInString(local)
+	return strings.ToUpper(string(r))
+}
+
+// ---- auth modes ----
+
+type authMode int
+
+const (
+	authNone  authMode = iota
+	authBasic          // basic auth only (WebDAV + browser)
+	authOIDC           // Google OIDC only (browser only)
+	authBoth           // OIDC for browser, basic for WebDAV clients
+)
+
+func (m authMode) String() string {
+	switch m {
+	case authNone:
+		return "none"
+	case authBasic:
+		return "basic"
+	case authOIDC:
+		return "oidc"
+	case authBoth:
+		return "basic+oidc"
+	default:
+		return "unknown"
+	}
+}
+
+type appConfig struct {
+	mode           authMode
+	dir            string
+	username       string
+	password       string
+	oauth2Cfg      *oauth2.Config
+	emailWhitelist map[string]bool
+	sessions       *sessionStore
+}
+
+func randomToken(n int) string {
+	b := make([]byte, n)
+	rand.Read(b)
+	return base64.URLEncoding.EncodeToString(b)
+}
+
+func (cfg *appConfig) checkBasicAuth(r *http.Request) bool {
+	u, p, ok := r.BasicAuth()
+	return ok && u == cfg.username && p == cfg.password
+}
+
+// checkOIDCSession validates the session cookie. On success it returns the
+// enriched request (with user stored in context) and true. On failure it
+// writes the redirect or error and returns nil, false.
+func (cfg *appConfig) checkOIDCSession(w http.ResponseWriter, r *http.Request) (*http.Request, bool) {
+	cookie, err := r.Cookie(sessionCookieName)
+	if err != nil {
+		http.SetCookie(w, &http.Cookie{Name: "oauth_next", Value: r.RequestURI, Path: "/", HttpOnly: true, MaxAge: 300})
+		http.Redirect(w, r, "/auth/login", http.StatusFound)
+		return nil, false
+	}
+	sd, ok := cfg.sessions.get(cookie.Value)
+	if !ok {
+		http.SetCookie(w, &http.Cookie{Name: "oauth_next", Value: r.RequestURI, Path: "/", HttpOnly: true, MaxAge: 300})
+		http.Redirect(w, r, "/auth/login", http.StatusFound)
+		return nil, false
+	}
+	if !cfg.emailWhitelist[sd.Email] {
+		http.Error(w, "Forbidden: "+sd.Email+" is not on the whitelist", http.StatusForbidden)
+		return nil, false
+	}
+	user := templateUser{Email: sd.Email, Picture: sd.Picture, Initial: emailInitial(sd.Email)}
+	return r.WithContext(context.WithValue(r.Context(), ctxUser{}, user)), true
+}
+
+func (cfg *appConfig) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch cfg.mode {
+		case authNone:
+			next(w, r)
+
+		case authBasic:
+			if !cfg.checkBasicAuth(r) {
+				w.Header().Set("WWW-Authenticate", `Basic realm="WebDAV"`)
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+			next(w, r)
+
+		case authOIDC:
+			r2, ok := cfg.checkOIDCSession(w, r)
+			if !ok {
+				return
+			}
+			next(w, r2)
+
+		case authBoth:
+			// WebDAV clients send Basic credentials; browsers going through OIDC don't.
+			if _, _, hasBasic := r.BasicAuth(); hasBasic {
+				if !cfg.checkBasicAuth(r) {
+					w.Header().Set("WWW-Authenticate", `Basic realm="WebDAV"`)
+					http.Error(w, "Unauthorized", http.StatusUnauthorized)
+					return
+				}
+				next(w, r)
+				return
+			}
+			r2, ok := cfg.checkOIDCSession(w, r)
+			if !ok {
+				return
+			}
+			next(w, r2)
+		}
+	}
+}
+
+// ---- OIDC handlers ----
+
+func (cfg *appConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
+	state := randomToken(16)
+	http.SetCookie(w, &http.Cookie{Name: "oauth_state", Value: state, Path: "/", HttpOnly: true, MaxAge: 300})
+	http.Redirect(w, r, cfg.oauth2Cfg.AuthCodeURL(state), http.StatusFound)
+}
+
+type googleUserInfo struct {
+	Email   string `json:"email"`
+	Picture string `json:"picture"`
+}
+
+func (cfg *appConfig) handleCallback(w http.ResponseWriter, r *http.Request) {
+	stateCookie, err := r.Cookie("oauth_state")
+	if err != nil || stateCookie.Value != r.URL.Query().Get("state") {
+		http.Error(w, "Invalid OAuth state", http.StatusBadRequest)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{Name: "oauth_state", MaxAge: -1, Path: "/"})
+
+	token, err := cfg.oauth2Cfg.Exchange(context.Background(), r.URL.Query().Get("code"))
+	if err != nil {
+		http.Error(w, "Token exchange failed", http.StatusInternalServerError)
+		log.Printf("OIDC token exchange: %v", err)
+		return
+	}
+
+	client := cfg.oauth2Cfg.Client(context.Background(), token)
+	resp, err := client.Get("https://www.googleapis.com/oauth2/v2/userinfo")
+	if err != nil {
+		http.Error(w, "Failed to fetch user info", http.StatusInternalServerError)
+		return
+	}
+	defer resp.Body.Close()
+
+	var info googleUserInfo
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		http.Error(w, "Failed to decode user info", http.StatusInternalServerError)
+		return
+	}
+
+	if !cfg.emailWhitelist[info.Email] {
+		http.Error(w, "Unauthorized", http.StatusForbidden)
+		return
+	}
+
+	sessionToken := cfg.sessions.create(info.Email, info.Picture)
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    sessionToken,
+		Path:     "/",
+		HttpOnly: true,
+		MaxAge:   int(sessionDuration.Seconds()),
+	})
+
+	next := "/"
+	if c, err := r.Cookie("oauth_next"); err == nil && strings.HasPrefix(c.Value, "/") {
+		next = c.Value
+		http.SetCookie(w, &http.Cookie{Name: "oauth_next", MaxAge: -1, Path: "/"})
+	}
+	http.Redirect(w, r, next, http.StatusFound)
+}
+
+func (cfg *appConfig) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if c, err := r.Cookie(sessionCookieName); err == nil {
+		cfg.sessions.delete(c.Value)
+	}
+	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, MaxAge: -1, Path: "/"})
+	http.Redirect(w, r, "/", http.StatusFound)
+}
+
+// ---- main ----
 
 func main() {
 	dir := os.Getenv("WEBDAV_DIR")
@@ -163,11 +472,57 @@ func main() {
 	}
 
 	noAuth := os.Getenv("WEBDAV_NO_AUTH") != ""
-
 	username := os.Getenv("WEBDAV_USERNAME")
 	password := os.Getenv("WEBDAV_PASSWORD")
-	if !noAuth && (username == "" || password == "") {
-		log.Fatal("WEBDAV_USERNAME and WEBDAV_PASSWORD environment variables are required")
+	clientID := os.Getenv("WEBDAV_GOOGLE_CLIENT_ID")
+	clientSecret := os.Getenv("WEBDAV_GOOGLE_CLIENT_SECRET")
+	redirectURL := os.Getenv("WEBDAV_GOOGLE_REDIRECT_URL")
+	emailWhitelistStr := os.Getenv("WEBDAV_EMAIL_WHITELIST")
+
+	hasBasic := username != "" && password != ""
+	hasOIDC := clientID != "" && clientSecret != ""
+
+	cfg := &appConfig{dir: dir}
+
+	switch {
+	case noAuth:
+		cfg.mode = authNone
+	case hasBasic && hasOIDC:
+		cfg.mode = authBoth
+	case hasOIDC:
+		cfg.mode = authOIDC
+	case hasBasic:
+		cfg.mode = authBasic
+	default:
+		log.Fatal("no auth mode configured: set WEBDAV_NO_AUTH=true, WEBDAV_USERNAME+WEBDAV_PASSWORD, or WEBDAV_GOOGLE_CLIENT_ID+WEBDAV_GOOGLE_CLIENT_SECRET")
+	}
+
+	if hasBasic {
+		cfg.username = username
+		cfg.password = password
+	}
+
+	if hasOIDC {
+		if redirectURL == "" {
+			log.Fatal("WEBDAV_GOOGLE_REDIRECT_URL is required when using Google OIDC (e.g. http://localhost:8080/auth/callback)")
+		}
+		cfg.emailWhitelist = make(map[string]bool)
+		for _, e := range strings.Split(emailWhitelistStr, ",") {
+			if e = strings.TrimSpace(e); e != "" {
+				cfg.emailWhitelist[e] = true
+			}
+		}
+		if len(cfg.emailWhitelist) == 0 {
+			log.Fatal("WEBDAV_EMAIL_WHITELIST is required when using Google OIDC (comma-separated emails)")
+		}
+		cfg.sessions = newSessionStore()
+		cfg.oauth2Cfg = &oauth2.Config{
+			ClientID:     clientID,
+			ClientSecret: clientSecret,
+			RedirectURL:  redirectURL,
+			Scopes:       []string{"https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/userinfo.profile"},
+			Endpoint:     google.Endpoint,
+		}
 	}
 
 	webdavHandler := &webdav.Handler{
@@ -181,16 +536,13 @@ func main() {
 		},
 	}
 
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if !noAuth {
-			u, p, ok := r.BasicAuth()
-			if !ok || u != username || p != password {
-				w.Header().Set("WWW-Authenticate", `Basic realm="WebDAV"`)
-				http.Error(w, "Unauthorized", http.StatusUnauthorized)
-				return
-			}
-		}
+	if cfg.mode == authOIDC || cfg.mode == authBoth {
+		http.HandleFunc("/auth/login", cfg.handleLogin)
+		http.HandleFunc("/auth/callback", cfg.handleCallback)
+		http.HandleFunc("/auth/logout", cfg.handleLogout)
+	}
 
+	http.HandleFunc("/", cfg.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet || r.Method == http.MethodHead {
 			info, err := os.Stat(filepath.Join(dir, r.URL.Path))
 			if err == nil && info.IsDir() {
@@ -199,19 +551,22 @@ func main() {
 					return
 				}
 				if r.Method == http.MethodGet {
-					serveIndex(w, dir, r.URL.Path)
+					serveIndex(w, r, dir, r.URL.Path)
 					return
 				}
 				w.WriteHeader(http.StatusOK)
 				return
 			}
 		}
-
 		webdavHandler.ServeHTTP(w, r)
-	})
+	}))
 
-	addr := ":8080"
-	log.Printf("Serving WebDAV on %s from directory %s", addr, dir)
+	port := os.Getenv("WEBDAV_PORT")
+	if port == "" {
+		port = "8080"
+	}
+	addr := ":" + port
+	log.Printf("Serving WebDAV on %s from %s (auth: %s)", addr, dir, cfg.mode)
 	if err := http.ListenAndServe(addr, nil); err != nil {
 		log.Fatal(err)
 	}
