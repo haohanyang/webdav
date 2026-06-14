@@ -5,12 +5,12 @@ import (
 	"crypto/rand"
 	_ "embed"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"html/template"
 	"log"
 	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -19,14 +19,16 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/zitadel/oidc/v3/pkg/client/rp"
+	zoidc "github.com/zitadel/oidc/v3/pkg/oidc"
 	"golang.org/x/net/webdav"
-	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/google"
-	"google.golang.org/api/idtoken"
 )
 
 //go:embed template.html
 var dirTemplate string
+
+//go:embed login.html
+var loginPage string
 
 var tmpl = template.Must(template.New("dir").Parse(dirTemplate))
 
@@ -113,6 +115,7 @@ type sessionData struct {
 	Email   string
 	Name    string
 	Picture string
+	IDToken string
 	Expires time.Time
 }
 
@@ -125,12 +128,12 @@ func newSessionStore() *sessionStore {
 	return &sessionStore{data: make(map[string]sessionData)}
 }
 
-func (s *sessionStore) create(id, email, name, picture string) string {
+func (s *sessionStore) create(id, email, name, picture, idToken string) string {
 	b := make([]byte, 32)
 	rand.Read(b)
 	token := base64.URLEncoding.EncodeToString(b)
 	s.mu.Lock()
-	s.data[token] = sessionData{Id: id, Email: email, Name: name, Picture: picture, Expires: time.Now().Add(sessionDuration)}
+	s.data[token] = sessionData{Id: id, Email: email, Name: name, Picture: picture, IDToken: idToken, Expires: time.Now().Add(sessionDuration)}
 	s.mu.Unlock()
 	return token
 }
@@ -171,7 +174,7 @@ type authMode int
 const (
 	authNone  authMode = iota
 	authBasic          // basic auth only (WebDAV + browser)
-	authOIDC           // Google OIDC only (browser only)
+	authOIDC           // OIDC only (browser only)
 	authBoth           // OIDC for browser, basic for WebDAV clients
 )
 
@@ -195,7 +198,8 @@ type appConfig struct {
 	dir            string
 	username       string
 	password       string
-	oauth2Cfg      *oauth2.Config
+	baseURL        string // scheme+host, e.g. "https://example.com" — used for OIDC redirect URIs
+	oidcProvider   rp.RelyingParty
 	emailWhitelist map[string]bool
 	idWhitelist    map[string]bool
 	sessions       *sessionStore
@@ -219,13 +223,13 @@ func (cfg *appConfig) checkOIDCSession(w http.ResponseWriter, r *http.Request) (
 	cookie, err := r.Cookie(sessionCookieName)
 	if err != nil {
 		http.SetCookie(w, &http.Cookie{Name: "oauth_next", Value: r.RequestURI, Path: "/", HttpOnly: true, MaxAge: 300})
-		http.Redirect(w, r, "/auth/login", http.StatusFound)
+		http.Redirect(w, r, "/auth/sign-in", http.StatusFound)
 		return nil, false
 	}
 	sd, ok := cfg.sessions.get(cookie.Value)
 	if !ok {
 		http.SetCookie(w, &http.Cookie{Name: "oauth_next", Value: r.RequestURI, Path: "/", HttpOnly: true, MaxAge: 300})
-		http.Redirect(w, r, "/auth/login", http.StatusFound)
+		http.Redirect(w, r, "/auth/sign-in", http.StatusFound)
 		return nil, false
 	}
 
@@ -284,17 +288,7 @@ func (cfg *appConfig) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 func (cfg *appConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
 	state := randomToken(16)
 	http.SetCookie(w, &http.Cookie{Name: "oauth_state", Value: state, Path: "/", HttpOnly: true, MaxAge: 300})
-	http.Redirect(w, r, cfg.oauth2Cfg.AuthCodeURL(state), http.StatusFound)
-}
-
-type googleUserInfo struct {
-	Id            string `json:"id"`
-	Email         string `json:"email"`
-	Name          string `json:"name"`
-	GivenName     string `json:"given_name"`
-	FamilyName    string `json:"family_name"`
-	Picture       string `json:"picture"`
-	EmailVerified bool   `json:"verified_email"`
+	http.Redirect(w, r, rp.AuthURL(state, cfg.oidcProvider), http.StatusFound)
 }
 
 func (cfg *appConfig) handleCallback(w http.ResponseWriter, r *http.Request) {
@@ -305,49 +299,36 @@ func (cfg *appConfig) handleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	http.SetCookie(w, &http.Cookie{Name: "oauth_state", MaxAge: -1, Path: "/"})
 
-	token, err := cfg.oauth2Cfg.Exchange(context.Background(), r.URL.Query().Get("code"))
+	tokens, err := rp.CodeExchange[*zoidc.IDTokenClaims](r.Context(), r.URL.Query().Get("code"), cfg.oidcProvider)
 	if err != nil {
 		http.Error(w, "Token exchange failed", http.StatusInternalServerError)
 		log.Printf("OIDC token exchange: %v", err)
 		return
 	}
-
-	rawIDToken, _ := token.Extra("id_token").(string)
-	if rawIDToken == "" {
+	if tokens.IDTokenClaims == nil {
 		http.Error(w, "ID token missing from token response", http.StatusInternalServerError)
 		return
 	}
 
-	if _, err := idtoken.Validate(context.Background(), rawIDToken, cfg.oauth2Cfg.ClientID); err != nil {
-		http.Error(w, "ID token verification failed", http.StatusUnauthorized)
-		log.Printf("OIDC ID token verification: %v", err)
-		return
-	}
-
-	client := cfg.oauth2Cfg.Client(context.Background(), token)
-	resp, err := client.Get("https://www.googleapis.com/oauth2/v2/userinfo")
+	userInfo, err := rp.Userinfo[*zoidc.UserInfo](r.Context(), tokens.AccessToken, tokens.TokenType, tokens.IDTokenClaims.GetSubject(), cfg.oidcProvider)
 	if err != nil {
 		http.Error(w, "Failed to fetch user info", http.StatusInternalServerError)
-		return
-	}
-	defer resp.Body.Close()
-
-	var info googleUserInfo
-	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
-		http.Error(w, "Failed to decode user info", http.StatusInternalServerError)
+		log.Printf("OIDC userinfo: %v", err)
 		return
 	}
 
-	if !info.EmailVerified {
-		http.Error(w, "Unauthorized: user must have email verified", http.StatusForbidden)
+	if !userInfo.EmailVerified {
+		http.Error(w, "Unauthorized: email not verified", http.StatusForbidden)
+		return
 	}
 
-	if !cfg.emailWhitelist[info.Email] && !cfg.idWhitelist[info.Id] {
+	sub := userInfo.Subject
+	if !cfg.emailWhitelist[userInfo.Email] && !cfg.idWhitelist[sub] {
 		http.Error(w, "Unauthorized", http.StatusForbidden)
 		return
 	}
 
-	sessionToken := cfg.sessions.create(info.Id, info.Email, info.Name, info.Picture)
+	sessionToken := cfg.sessions.create(sub, userInfo.Email, userInfo.Name, userInfo.Picture, tokens.IDToken)
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    sessionToken,
@@ -369,11 +350,29 @@ func (cfg *appConfig) handleLogout(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+
+	var idToken string
 	if c, err := r.Cookie(sessionCookieName); err == nil {
+		if sd, ok := cfg.sessions.get(c.Value); ok {
+			idToken = sd.IDToken
+		}
 		cfg.sessions.delete(c.Value)
 	}
 	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, MaxAge: -1, Path: "/"})
-	http.Redirect(w, r, "/", http.StatusFound)
+
+	// Attempt RP-initiated logout so the provider session is also cleared.
+	// Falls back to a local signed-out page for providers without end_session_endpoint.
+	postLogoutURI := cfg.baseURL + "/auth/sign-in"
+	if logoutURL, err := rp.EndSession(r.Context(), cfg.oidcProvider, idToken, postLogoutURI, "", "", nil); err == nil {
+		http.Redirect(w, r, logoutURL.String(), http.StatusFound)
+		return
+	}
+	http.Redirect(w, r, "/auth/sign-in", http.StatusFound)
+}
+
+func handleSignIn(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprint(w, loginPage)
 }
 
 // ---- main ----
@@ -387,9 +386,10 @@ func main() {
 	noAuth := os.Getenv("WEBDAV_NO_AUTH") != ""
 	username := os.Getenv("WEBDAV_USERNAME")
 	password := os.Getenv("WEBDAV_PASSWORD")
-	clientID := os.Getenv("WEBDAV_GOOGLE_CLIENT_ID")
-	clientSecret := os.Getenv("WEBDAV_GOOGLE_CLIENT_SECRET")
-	redirectURL := os.Getenv("WEBDAV_GOOGLE_REDIRECT_URL")
+	clientID := os.Getenv("WEBDAV_OIDC_CLIENT_ID")
+	clientSecret := os.Getenv("WEBDAV_OIDC_CLIENT_SECRET")
+	redirectURL := os.Getenv("WEBDAV_OIDC_REDIRECT_URL")
+	issuer := os.Getenv("WEBDAV_OIDC_ISSUER")
 	emailWhitelistStr := os.Getenv("WEBDAV_EMAIL_WHITELIST")
 	idWhitelistStr := os.Getenv("WEBDAV_ID_WHITELIST")
 
@@ -417,9 +417,16 @@ func main() {
 	}
 
 	if hasOIDC {
-		if redirectURL == "" {
-			log.Fatal("WEBDAV_GOOGLE_REDIRECT_URL is required when using Google OIDC (e.g. http://localhost:8080/auth/callback)")
+		if issuer == "" {
+			log.Fatal("WEBDAV_OIDC_ISSUER is required when using OIDC (e.g. https://accounts.google.com)")
 		}
+		if redirectURL == "" {
+			log.Fatal("WEBDAV_OIDC_REDIRECT_URL is required when using OIDC (e.g. http://localhost:8080/auth/callback)")
+		}
+		if u, err := url.Parse(redirectURL); err == nil {
+			cfg.baseURL = u.Scheme + "://" + u.Host
+		}
+
 		cfg.emailWhitelist = make(map[string]bool)
 		for e := range strings.SplitSeq(emailWhitelistStr, ",") {
 			if e = strings.TrimSpace(e); e != "" {
@@ -433,16 +440,22 @@ func main() {
 			}
 		}
 		if len(cfg.emailWhitelist) == 0 && len(cfg.idWhitelist) == 0 {
-			log.Fatal("WEBDAV_EMAIL_WHITELIST or WEBDAV_ID_WHITELIST is required when using Google OIDC")
+			log.Fatal("WEBDAV_EMAIL_WHITELIST or WEBDAV_ID_WHITELIST is required when using OIDC")
 		}
+
+		provider, err := rp.NewRelyingPartyOIDC(
+			context.Background(),
+			issuer,
+			clientID,
+			clientSecret,
+			redirectURL,
+			[]string{"openid", "email", "profile"},
+		)
+		if err != nil {
+			log.Fatalf("Failed to initialize OIDC provider: %v", err)
+		}
+		cfg.oidcProvider = provider
 		cfg.sessions = newSessionStore()
-		cfg.oauth2Cfg = &oauth2.Config{
-			ClientID:     clientID,
-			ClientSecret: clientSecret,
-			RedirectURL:  redirectURL,
-			Scopes:       []string{"https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/userinfo.profile"},
-			Endpoint:     google.Endpoint,
-		}
 	}
 
 	webdavHandler := &webdav.Handler{
@@ -459,7 +472,9 @@ func main() {
 	if cfg.mode == authOIDC || cfg.mode == authBoth {
 		http.HandleFunc("/auth/login", cfg.handleLogin)
 		http.HandleFunc("/auth/callback", cfg.handleCallback)
+		http.HandleFunc("/auth/sign-in", handleSignIn)
 		http.HandleFunc("/auth/logout", cfg.handleLogout)
+
 	}
 
 	http.HandleFunc("/", cfg.authMiddleware(func(w http.ResponseWriter, r *http.Request) {

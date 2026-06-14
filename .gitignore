@@ -10,3 +10,4 @@ webdav.exe
 .idea/
 
 testdir/
+*.cmd
