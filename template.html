@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="WebDav Server">
+<title>Index of {{.Path}}</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/7.0.1/css/all.min.css" integrity="sha512-2SwdPD6INVrV/lHTZbO2nodKhrnDdJK9/kg2XD1r9uGqPo1cUbujc+IYdlYdEErWNu69gVcYgdxlmVmzTWnetw==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 min-h-screen text-gray-800">
+
+{{if .User.Email}}
+<header class="sticky top-0 z-10 bg-white border-b border-gray-200 shadow-sm">
+  <div class="max-w-5xl mx-auto px-4 h-12 flex items-center justify-end">
+    <div class="relative" id="user-menu">
+      <button id="avatar-btn" type="button"
+              class="flex items-center gap-2 px-1 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">
+        {{if .User.Picture}}
+        <img src="{{.User.Picture}}" class="w-8 h-8 rounded-full select-none" alt="">
+        {{else}}
+        <span class="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center text-white text-sm font-semibold select-none">{{.User.Initial}}</span>
+        {{end}}
+        {{if .User.Name}}<span class="text-sm font-medium text-gray-700">{{.User.Name}}</span>{{end}}
+        <i class="fa-solid fa-chevron-down text-xs text-gray-400"></i>
+      </button>
+      <div id="user-dropdown"
+           class="hidden absolute right-0 mt-2 w-60 bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden z-20">
+        <div class="px-4 py-3 border-b border-gray-100 flex items-center gap-3">
+          {{if .User.Picture}}
+          <img src="{{.User.Picture}}" class="w-9 h-9 rounded-full shrink-0" alt="">
+          {{else}}
+          <span class="w-9 h-9 rounded-full bg-blue-500 flex items-center justify-center text-white text-sm font-semibold shrink-0">{{.User.Initial}}</span>
+          {{end}}
+          <div class="min-w-0">
+            {{if .User.Name}}<p class="text-sm font-medium text-gray-800 truncate">{{.User.Name}}</p>{{end}}
+            <p class="text-xs text-gray-500 truncate">{{.User.Email}}</p>
+          </div>
+        </div>
+        <form method="POST" action="/auth/logout">
+          <button type="submit" class="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors">
+            <i class="fa-solid fa-right-from-bracket w-4 text-gray-400"></i>
+            Sign out
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</header>
+<script>
+(function(){
+  var btn = document.getElementById('avatar-btn');
+  var dd  = document.getElementById('user-dropdown');
+  btn.addEventListener('click', function(e){ e.stopPropagation(); dd.classList.toggle('hidden'); });
+  document.addEventListener('click', function(){ dd.classList.add('hidden'); });
+})();
+</script>
+{{end}}
+
+<div class="max-w-5xl mx-auto px-4 py-10">
+
+  <!-- Header -->
+  <div class="mb-6 flex items-end justify-between gap-4">
+    <div>
+      <p class="text-xs font-semibold uppercase tracking-widest text-gray-400 mb-1">File Browser</p>
+      <h1 class="text-2xl font-bold text-gray-900 break-all font-mono">{{.Path}}</h1>
+    </div>
+    <div class="shrink-0">
+      <button id="upload-btn"
+              class="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 active:bg-blue-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+        <i class="fa-solid fa-upload"></i>
+        Upload
+      </button>
+      <input id="upload-input" type="file" multiple class="hidden">
+    </div>
+  </div>
+
+  <!-- Card -->
+  <div class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="border-b border-gray-200 bg-gray-50">
+          <th class="text-left px-5 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Name</th>
+          <th class="text-left px-5 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">MIME Type</th>
+          <th class="text-left px-5 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Modified</th>
+          <th class="text-right px-5 py-3 font-semibold text-xs uppercase tracking-wider text-gray-500">Size</th>
+          <th class="w-10 px-3 py-3"></th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-100">
+
+        {{if ne .Path "/"}}
+        <tr class="hover:bg-blue-50 transition-colors">
+          <td class="px-5 py-3" colspan="5">
+            <a href="../" class="flex items-center gap-2 text-gray-500 hover:text-blue-600 font-mono">
+              <i class="fa-solid fa-chevron-left fa-fw text-sm"></i>
+              ..
+            </a>
+          </td>
+        </tr>
+        {{end}}
+
+        {{range .Entries}}
+        <tr class="hover:bg-blue-50 transition-colors group">
+          <td class="px-5 py-3">
+            {{if .IsDir}}
+            <a href="{{.Name}}/" class="flex items-center gap-2 font-medium text-blue-700 hover:text-blue-900">
+              <i class="fa-solid fa-folder fa-fw text-yellow-400"></i>
+              {{.Name}}
+            </a>
+            {{else}}
+            <a href="{{.Name}}" class="flex items-center gap-2 text-gray-700 hover:text-blue-700">
+              <i class="fa-regular fa-file fa-fw text-gray-400"></i>
+              {{.Name}}
+            </a>
+            {{end}}
+          </td>
+          <td class="px-5 py-3 text-gray-400 whitespace-nowrap font-mono text-xs">{{.MimeType}}</td>
+          <td class="px-5 py-3 text-gray-400 tabular-nums whitespace-nowrap">{{.ModTime}}</td>
+          <td class="px-5 py-3 text-right text-gray-400 tabular-nums whitespace-nowrap">
+            {{if .IsDir}}<span class="text-gray-300">&mdash;</span>{{else}}{{.HumanSize}}{{end}}
+          </td>
+          <td class="px-3 py-3 text-right">
+            <button class="action-btn opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-gray-200 text-gray-400 hover:text-gray-600"
+                    data-name="{{.Name}}" data-url="{{.Name}}{{if .IsDir}}/{{end}}" aria-label="Actions">
+              <i class="fa-solid fa-ellipsis-vertical"></i>
+            </button>
+          </td>
+        </tr>
+        {{end}}
+
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Shared action dropdown -->
+  <div id="action-dropdown" class="hidden fixed bg-white rounded-xl shadow-lg border border-gray-200 py-1 z-30 w-36">
+    <button id="action-rename"
+            class="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors">
+      <i class="fa-solid fa-pen-to-square fa-fw text-gray-400"></i>
+      Rename
+    </button>
+    <button id="action-delete"
+            class="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors">
+      <i class="fa-solid fa-trash fa-fw"></i>
+      Delete
+    </button>
+  </div>
+  <script>
+  (function(){
+    var dropdown = document.getElementById('action-dropdown');
+    var currentName = null, currentUrl = null;
+
+    document.querySelectorAll('.action-btn').forEach(function(btn) {
+      btn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        currentName = btn.dataset.name;
+        currentUrl  = btn.dataset.url;
+        var rect = btn.getBoundingClientRect();
+        dropdown.style.top  = (rect.bottom + window.scrollY + 4) + 'px';
+        dropdown.style.left = Math.min(rect.left, window.innerWidth - 160) + 'px';
+        dropdown.classList.remove('hidden');
+      });
+    });
+
+    document.getElementById('action-rename').addEventListener('click', function() {
+      dropdown.classList.add('hidden');
+      if (!currentUrl) return;
+      var newName = prompt('Rename "' + currentName + '" to:', currentName);
+      if (!newName || newName === currentName) return;
+      var base = window.location.pathname;
+      if (!base.endsWith('/')) base += '/';
+      var dest = window.location.origin + base + encodeURIComponent(newName);
+      fetch(currentUrl, {method: 'MOVE', credentials: 'same-origin', headers: {Destination: dest, Overwrite: 'F'}})
+        .then(function(r) {
+          if (r.ok) { location.reload(); }
+          else { alert('Rename failed: ' + r.status + ' ' + r.statusText); }
+        })
+        .catch(function(err) { alert('Rename failed: ' + err); });
+    });
+
+    document.getElementById('action-delete').addEventListener('click', function() {
+      dropdown.classList.add('hidden');
+      if (!currentUrl) return;
+      if (!confirm('Delete "' + currentName + '"?')) return;
+      fetch(currentUrl, {method: 'DELETE', credentials: 'same-origin'})
+        .then(function(r) {
+          if (r.ok) { location.reload(); }
+          else { alert('Delete failed: ' + r.status + ' ' + r.statusText); }
+        })
+        .catch(function(err) { alert('Delete failed: ' + err); });
+    });
+
+    document.addEventListener('click', function() { dropdown.classList.add('hidden'); });
+  })();
+  </script>
+  <script>
+  (function(){
+    var btn   = document.getElementById('upload-btn');
+    var input = document.getElementById('upload-input');
+    btn.addEventListener('click', function() { input.click(); });
+    input.addEventListener('change', function() {
+      var files = Array.from(input.files);
+      if (!files.length) return;
+      var base = window.location.pathname;
+      if (!base.endsWith('/')) base += '/';
+      btn.disabled = true;
+      var done = 0;
+      function label() { btn.textContent = 'Uploading ' + done + '/' + files.length + '…'; }
+      label();
+      Promise.all(files.map(function(f) {
+        return fetch(base + encodeURIComponent(f.name), {method: 'PUT', credentials: 'same-origin', body: f})
+          .then(function(r) {
+            if (!r.ok) throw new Error('"' + f.name + '" failed: ' + r.status + ' ' + r.statusText);
+            done++; label();
+          });
+      })).then(function() {
+        location.reload();
+      }).catch(function(err) {
+        alert('Upload failed: ' + err);
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fa-solid fa-upload"></i> Upload';
+        input.value = '';
+      });
+    });
+  })();
+  </script>
+
+  <div class="mt-4 flex items-center justify-end gap-2 text-xs text-gray-400">
+    <span>WebDAV File Server</span>
+    <a href="https://github.com/haohanyang/webdav" target="_blank" rel="noopener" class="hover:text-gray-600 transition-colors" title="GitHub">
+      <i class="fa-brands fa-github"></i>
+    </a>
+  </div>
+</div>
+
+</body>
+</html>
