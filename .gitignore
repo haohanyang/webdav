@@ -11,3 +11,8 @@ webdav.exe
 
 testdir/
 *.cmd
+
+assets/fontawesome
+assets/app.css
+
+node_modules/

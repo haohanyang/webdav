@@ -12,30 +12,30 @@ A minimal WebDAV server.
 
 ## Environment Variables
 
-| Variable                    | Description                                                           |
-| --------------------------- | --------------------------------------------------------------------- |
-| `WEBDAV_DIR`                | **(Required)** Path to the directory to serve                         |
-| `WEBDAV_PORT`               | Port to listen on (default: `8080`)                                   |
-| `WEBDAV_PREFIX`             | URL path prefix for WebDAV (default: `dav`; e.g. `/dav/movie.mp4`)    |
-| `WEBDAV_SSO_SESSION_EXPIRE_IN` | SSO session lifetime as a Go duration (default: `168h`, one week) |
-| `WEBDAV_NO_AUTH`            | Set to any value to disable authentication                            |
-| `WEBDAV_USERNAME`           | Basic auth username                                                   |
-| `WEBDAV_PASSWORD`           | Basic auth password                                                   |
-| `WEBDAV_OIDC_ISSUER`        | OIDC issuer URL (e.g. `https://accounts.google.com`)                  |
-| `WEBDAV_OIDC_CLIENT_ID`     | OIDC client ID                                                        |
-| `WEBDAV_OIDC_CLIENT_SECRET` | OIDC client secret                                                    |
-| `WEBDAV_OIDC_REDIRECT_URL`  | OIDC redirect URL (e.g. `http://localhost:8080/auth/callback`)        |
-| `WEBDAV_EMAIL_WHITELIST`    | Comma-separated list of allowed emails (matched against OIDC `email`) |
-| `WEBDAV_ID_WHITELIST`       | Comma-separated list of allowed subject IDs (matched against OIDC `sub`) |
+| Variable                       | Description                                                              |
+| ------------------------------ | ------------------------------------------------------------------------ |
+| `WEBDAV_DIR`                   | **(Required)** Path to the directory to serve                            |
+| `WEBDAV_PORT`                  | Port to listen on (default: `8080`)                                      |
+| `WEBDAV_PREFIX`                | URL path prefix for WebDAV (default: `dav`; e.g. `/dav/movie.mp4`)       |
+| `WEBDAV_SSO_SESSION_EXPIRE_IN` | SSO session lifetime as a Go duration (default: `168h`, one week)        |
+| `WEBDAV_NO_AUTH`               | Set to any value to disable authentication                               |
+| `WEBDAV_USERNAME`              | Basic auth username                                                      |
+| `WEBDAV_PASSWORD`              | Basic auth password                                                      |
+| `WEBDAV_OIDC_ISSUER`           | OIDC issuer URL (e.g. `https://accounts.google.com`)                     |
+| `WEBDAV_OIDC_CLIENT_ID`        | OIDC client ID                                                           |
+| `WEBDAV_OIDC_CLIENT_SECRET`    | OIDC client secret                                                       |
+| `WEBDAV_OIDC_REDIRECT_URL`     | OIDC redirect URL (e.g. `http://localhost:8080/auth/callback`)           |
+| `WEBDAV_EMAIL_WHITELIST`       | Comma-separated list of allowed emails (matched against OIDC `email`)    |
+| `WEBDAV_ID_WHITELIST`          | Comma-separated list of allowed subject IDs (matched against OIDC `sub`) |
 
 ## Authentication Modes
 
-| Mode          | Variables set                                      | Who can access                                                    |
-| ------------- | -------------------------------------------------- | ----------------------------------------------------------------- |
-| No auth       | `WEBDAV_NO_AUTH`                                   | Everyone                                                          |
-| Basic auth    | `WEBDAV_USERNAME` + `WEBDAV_PASSWORD`              | WebDAV clients and browsers (native dialog)                       |
-| OIDC          | OIDC vars + whitelist                              | Browsers only (via SSO login page)                                |
-| Basic + OIDC  | OIDC vars + whitelist + `WEBDAV_USERNAME` + `WEBDAV_PASSWORD` | Browsers via OIDC or password form; WebDAV clients via basic auth |
+| Mode         | Variables set                                                 | Who can access                                                    |
+| ------------ | ------------------------------------------------------------- | ----------------------------------------------------------------- |
+| No auth      | `WEBDAV_NO_AUTH`                                              | Everyone                                                          |
+| Basic auth   | `WEBDAV_USERNAME` + `WEBDAV_PASSWORD`                         | WebDAV clients and browsers (native dialog)                       |
+| OIDC         | OIDC vars + whitelist                                         | Browsers only (via SSO login page)                                |
+| Basic + OIDC | OIDC vars + whitelist + `WEBDAV_USERNAME` + `WEBDAV_PASSWORD` | Browsers via OIDC or password form; WebDAV clients via basic auth |
 
 ## Usage
 
@@ -115,3 +115,7 @@ services:
     volumes:
       - /path/to/my/data:/data
 ```
+
+## Attribution
+
+- <a href="https://www.flaticon.com/free-icons/hdd" title="hdd icons">Hdd icons created by Fathema Khanom - Flaticon</a>

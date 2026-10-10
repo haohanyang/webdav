@@ -1,0 +1,11 @@
+{
+  "name": "webdav",
+  "scripts": {
+    "build:css": "tailwindcss -i app.css -o assets/app.css"
+  },
+  "dependencies": {
+    "@fortawesome/fontawesome-free": "^7.3.1",
+    "@tailwindcss/cli": "^4.3.3",
+    "tailwindcss": "^4.3.3"
+  }
+}

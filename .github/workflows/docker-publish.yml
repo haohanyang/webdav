@@ -18,6 +18,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Install node.js dependencies
+        run: npm ci
+
+      - name: Copy Font Awesome assets and build CSS
+        run: |
+          mkdir -p assets/fontawesome
+          cp -R node_modules/@fortawesome/fontawesome-free/. assets/fontawesome/
+          npm run build:css
+
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
