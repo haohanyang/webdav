@@ -7,6 +7,8 @@
 <title>Index of {{.Path}}</title>
 <link rel="icon" type="image/png" href="/assets/icon.png">
 <link rel="stylesheet" href="/assets/app.css" />
+<link rel="stylesheet" href="/assets/fontawesome/css/all.css" />
+<script src="/assets/app.js" defer></script>
 </head>
 <body class="bg-gray-50 min-h-screen text-gray-800">
 
@@ -47,14 +49,6 @@
     </div>
   </div>
 </header>
-<script>
-(function(){
-  var btn = document.getElementById('avatar-btn');
-  var dd  = document.getElementById('user-dropdown');
-  btn.addEventListener('click', function(e){ e.stopPropagation(); dd.classList.toggle('hidden'); });
-  document.addEventListener('click', function(){ dd.classList.add('hidden'); });
-})();
-</script>
 {{end}}
 
 <div class="max-w-5xl mx-auto px-4 py-10">
@@ -146,86 +140,6 @@
       Delete
     </button>
   </div>
-  <script>
-  (function(){
-    var dropdown = document.getElementById('action-dropdown');
-    var currentName = null, currentUrl = null;
-
-    document.querySelectorAll('.action-btn').forEach(function(btn) {
-      btn.addEventListener('click', function(e) {
-        e.stopPropagation();
-        currentName = btn.dataset.name;
-        currentUrl  = btn.dataset.url;
-        var rect = btn.getBoundingClientRect();
-        dropdown.style.top  = (rect.bottom + window.scrollY + 4) + 'px';
-        dropdown.style.left = Math.min(rect.left, window.innerWidth - 160) + 'px';
-        dropdown.classList.remove('hidden');
-      });
-    });
-
-    document.getElementById('action-rename').addEventListener('click', function() {
-      dropdown.classList.add('hidden');
-      if (!currentUrl) return;
-      var newName = prompt('Rename "' + currentName + '" to:', currentName);
-      if (!newName || newName === currentName) return;
-      var base = window.location.pathname;
-      if (!base.endsWith('/')) base += '/';
-      var dest = window.location.origin + base + encodeURIComponent(newName);
-      fetch(currentUrl, {method: 'MOVE', credentials: 'same-origin', headers: {Destination: dest, Overwrite: 'F'}})
-        .then(function(r) {
-          if (r.ok) { location.reload(); }
-          else { alert('Rename failed: ' + r.status + ' ' + r.statusText); }
-        })
-        .catch(function(err) { alert('Rename failed: ' + err); });
-    });
-
-    document.getElementById('action-delete').addEventListener('click', function() {
-      dropdown.classList.add('hidden');
-      if (!currentUrl) return;
-      if (!confirm('Delete "' + currentName + '"?')) return;
-      fetch(currentUrl, {method: 'DELETE', credentials: 'same-origin'})
-        .then(function(r) {
-          if (r.ok) { location.reload(); }
-          else { alert('Delete failed: ' + r.status + ' ' + r.statusText); }
-        })
-        .catch(function(err) { alert('Delete failed: ' + err); });
-    });
-
-    document.addEventListener('click', function() { dropdown.classList.add('hidden'); });
-  })();
-  </script>
-  <script>
-  (function(){
-    var btn   = document.getElementById('upload-btn');
-    var input = document.getElementById('upload-input');
-    btn.addEventListener('click', function() { input.click(); });
-    input.addEventListener('change', function() {
-      var files = Array.from(input.files);
-      if (!files.length) return;
-      var base = window.location.pathname;
-      if (!base.endsWith('/')) base += '/';
-      btn.disabled = true;
-      var done = 0;
-      function label() { btn.textContent = 'Uploading ' + done + '/' + files.length + '…'; }
-      label();
-      Promise.all(files.map(function(f) {
-        return fetch(base + encodeURIComponent(f.name), {method: 'PUT', credentials: 'same-origin', body: f})
-          .then(function(r) {
-            if (!r.ok) throw new Error('"' + f.name + '" failed: ' + r.status + ' ' + r.statusText);
-            done++; label();
-          });
-      })).then(function() {
-        location.reload();
-      }).catch(function(err) {
-        alert('Upload failed: ' + err);
-        btn.disabled = false;
-        btn.innerHTML = '<i class="fa-solid fa-upload"></i> Upload';
-        input.value = '';
-      });
-    });
-  })();
-  </script>
-
   <div class="mt-4 flex items-center justify-end gap-2 text-xs text-gray-400">
     <span>WebDAV File Server</span>
     <a href="https://github.com/haohanyang/webdav" target="_blank" rel="noopener" class="hover:text-gray-600 transition-colors" title="GitHub">
