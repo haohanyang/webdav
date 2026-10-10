@@ -16,6 +16,7 @@ A minimal WebDAV server.
 | --------------------------- | --------------------------------------------------------------------- |
 | `WEBDAV_DIR`                | **(Required)** Path to the directory to serve                         |
 | `WEBDAV_PORT`               | Port to listen on (default: `8080`)                                   |
+| `WEBDAV_PREFIX`             | URL path prefix for WebDAV (default: `dav`; e.g. `/dav/movie.mp4`)    |
 | `WEBDAV_NO_AUTH`            | Set to any value to disable authentication                            |
 | `WEBDAV_USERNAME`           | Basic auth username                                                   |
 | `WEBDAV_PASSWORD`           | Basic auth password                                                   |
@@ -41,6 +42,7 @@ A minimal WebDAV server.
 
 ```bash
 export WEBDAV_DIR=/path/to/files
+export WEBDAV_PREFIX=dav
 export WEBDAV_NO_AUTH=true
 
 go run .

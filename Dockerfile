@@ -8,5 +8,6 @@ RUN go build -o webdav .
 FROM alpine:latest
 WORKDIR /app
 COPY --from=builder /app/webdav .
+COPY --from=builder /app/assets ./assets
 EXPOSE 8080
 CMD ["./webdav"]

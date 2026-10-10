@@ -70,8 +70,8 @@ type templateUser struct {
 	Initial string // uppercase first rune of the email local-part
 }
 
-func serveIndex(w http.ResponseWriter, r *http.Request, fsRoot, urlPath string) {
-	fsPath := filepath.Join(fsRoot, filepath.FromSlash(urlPath))
+func serveIndex(w http.ResponseWriter, r *http.Request, fsRoot, fsPath, displayPath string) {
+	fsPath = filepath.Join(fsRoot, filepath.FromSlash(fsPath))
 	infos, err := os.ReadDir(fsPath)
 	if err != nil {
 		http.Error(w, "cannot read directory", http.StatusInternalServerError)
@@ -109,7 +109,7 @@ func serveIndex(w http.ResponseWriter, r *http.Request, fsRoot, urlPath string) 
 		Path    string
 		Entries []dirEntry
 		User    templateUser
-	}{urlPath, append(dirs, files...), user})
+	}{displayPath, append(dirs, files...), user})
 }
 
 // ---- session store ----
@@ -437,20 +437,20 @@ func (cfg *appConfig) handleBasicSignIn(w http.ResponseWriter, r *http.Request) 
 // ---- main ----
 
 func main() {
-	dir := os.Getenv("WEBDAV_DIR")
-	if dir == "" {
-		log.Fatal("WEBDAV_DIR environment variable is required")
+	envCfg, err := loadConfig()
+	if err != nil {
+		log.Fatal(err)
 	}
-
-	noAuth := os.Getenv("WEBDAV_NO_AUTH") != ""
-	username := os.Getenv("WEBDAV_USERNAME")
-	password := os.Getenv("WEBDAV_PASSWORD")
-	clientID := os.Getenv("WEBDAV_OIDC_CLIENT_ID")
-	clientSecret := os.Getenv("WEBDAV_OIDC_CLIENT_SECRET")
-	redirectURL := os.Getenv("WEBDAV_OIDC_REDIRECT_URL")
-	issuer := os.Getenv("WEBDAV_OIDC_ISSUER")
-	emailWhitelistStr := os.Getenv("WEBDAV_EMAIL_WHITELIST")
-	idWhitelistStr := os.Getenv("WEBDAV_ID_WHITELIST")
+	dir := envCfg.dir
+	prefixPath := envCfg.prefixPath
+	username := envCfg.username
+	password := envCfg.password
+	clientID := envCfg.oidcClientID
+	clientSecret := envCfg.oidcClientSecret
+	redirectURL := envCfg.oidcRedirectURL
+	issuer := envCfg.oidcIssuer
+	emailWhitelistStr := envCfg.emailWhitelist
+	idWhitelistStr := envCfg.idWhitelist
 
 	hasBasic := username != "" && password != ""
 	hasOIDC := clientID != "" && clientSecret != ""
@@ -458,7 +458,7 @@ func main() {
 	cfg := &appConfig{dir: dir}
 
 	switch {
-	case noAuth:
+	case envCfg.noAuth:
 		cfg.mode = authNone
 	case hasBasic && hasOIDC:
 		cfg.mode = authBoth
@@ -467,7 +467,7 @@ func main() {
 	case hasBasic:
 		cfg.mode = authBasic
 	default:
-		log.Fatal("no auth mode configured: set WEBDAV_NO_AUTH=true, or basic auth/OIDC credentials")
+		log.Fatalf("no auth mode configured: set %s=true, or basic auth/OIDC credentials", envNoAuth)
 	}
 
 	if hasBasic {
@@ -477,10 +477,10 @@ func main() {
 
 	if hasOIDC {
 		if issuer == "" {
-			log.Fatal("WEBDAV_OIDC_ISSUER is required when using OIDC (e.g. https://accounts.google.com)")
+			log.Fatalf("%s is required when using OIDC (e.g. https://accounts.google.com)", envOIDCIssuer)
 		}
 		if redirectURL == "" {
-			log.Fatal("WEBDAV_OIDC_REDIRECT_URL is required when using OIDC (e.g. http://localhost:8080/auth/callback)")
+			log.Fatalf("%s is required when using OIDC (e.g. http://localhost:8080/auth/callback)", envOIDCRedirectURL)
 		}
 		if u, err := url.Parse(redirectURL); err == nil {
 			cfg.baseURL = u.Scheme + "://" + u.Host
@@ -499,7 +499,7 @@ func main() {
 			}
 		}
 		if len(cfg.emailWhitelist) == 0 && len(cfg.idWhitelist) == 0 {
-			log.Fatal("WEBDAV_EMAIL_WHITELIST or WEBDAV_ID_WHITELIST is required when using OIDC")
+			log.Fatalf("%s or %s is required when using OIDC", envEmailWhitelist, envIDWhitelist)
 		}
 
 		provider, err := rp.NewRelyingPartyOIDC(
@@ -518,7 +518,7 @@ func main() {
 	}
 
 	webdavHandler := &webdav.Handler{
-		Prefix:     "/",
+		Prefix:     prefixPath,
 		FileSystem: webdav.Dir(dir),
 		LockSystem: webdav.NewMemLS(),
 		Logger: func(r *http.Request, err error) {
@@ -538,16 +538,32 @@ func main() {
 		}
 	}
 
+	// Keep static assets outside the auth middleware so browser asset requests
+	// cannot replace the user's saved post-login destination.
+	http.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir("assets"))))
+	http.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/assets/icon.png", http.StatusFound)
+	})
+
 	http.HandleFunc("/", cfg.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			http.Redirect(w, r, prefixPath, http.StatusFound)
+			return
+		}
+		if r.URL.Path != prefixPath && !strings.HasPrefix(r.URL.Path, prefixPath+"/") {
+			http.NotFound(w, r)
+			return
+		}
+		fsPath := strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, prefixPath), "/")
 		if r.Method == http.MethodGet || r.Method == http.MethodHead {
-			info, err := os.Stat(filepath.Join(dir, r.URL.Path))
+			info, err := os.Stat(filepath.Join(dir, filepath.FromSlash(fsPath)))
 			if err == nil && info.IsDir() {
 				if !strings.HasSuffix(r.URL.Path, "/") {
 					http.Redirect(w, r, r.URL.Path+"/", http.StatusMovedPermanently)
 					return
 				}
 				if r.Method == http.MethodGet {
-					serveIndex(w, r, dir, r.URL.Path)
+					serveIndex(w, r, dir, fsPath, "/"+fsPath)
 					return
 				}
 				w.WriteHeader(http.StatusOK)
@@ -557,7 +573,7 @@ func main() {
 		webdavHandler.ServeHTTP(w, r)
 	}))
 
-	port := os.Getenv("WEBDAV_PORT")
+	port := envCfg.port
 	if port == "" {
 		port = "8080"
 	}
