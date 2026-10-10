@@ -70,7 +70,7 @@ type templateUser struct {
 	Initial string // uppercase first rune of the email local-part
 }
 
-func serveIndex(w http.ResponseWriter, r *http.Request, fsRoot, fsPath, urlPath string) {
+func serveIndex(w http.ResponseWriter, r *http.Request, fsRoot, fsPath, displayPath string) {
 	fsPath = filepath.Join(fsRoot, filepath.FromSlash(fsPath))
 	infos, err := os.ReadDir(fsPath)
 	if err != nil {
@@ -109,7 +109,7 @@ func serveIndex(w http.ResponseWriter, r *http.Request, fsRoot, fsPath, urlPath 
 		Path    string
 		Entries []dirEntry
 		User    templateUser
-	}{urlPath, append(dirs, files...), user})
+	}{displayPath, append(dirs, files...), user})
 }
 
 // ---- session store ----
@@ -563,7 +563,7 @@ func main() {
 					return
 				}
 				if r.Method == http.MethodGet {
-					serveIndex(w, r, dir, fsPath, r.URL.Path)
+					serveIndex(w, r, dir, fsPath, "/"+fsPath)
 					return
 				}
 				w.WriteHeader(http.StatusOK)
