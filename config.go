@@ -5,22 +5,26 @@ import (
 	"os"
 	"path"
 	"strings"
+	"time"
 )
 
 const (
-	envDir              = "WEBDAV_DIR"
-	envPort             = "WEBDAV_PORT"
-	envPrefix           = "WEBDAV_PREFIX"
-	envNoAuth           = "WEBDAV_NO_AUTH"
-	envUsername         = "WEBDAV_USERNAME"
-	envPassword         = "WEBDAV_PASSWORD"
-	envOIDCIssuer       = "WEBDAV_OIDC_ISSUER"
-	envOIDCClientID     = "WEBDAV_OIDC_CLIENT_ID"
-	envOIDCClientSecret = "WEBDAV_OIDC_CLIENT_SECRET"
-	envOIDCRedirectURL  = "WEBDAV_OIDC_REDIRECT_URL"
-	envEmailWhitelist   = "WEBDAV_EMAIL_WHITELIST"
-	envIDWhitelist      = "WEBDAV_ID_WHITELIST"
+	envDir                = "WEBDAV_DIR"
+	envPort               = "WEBDAV_PORT"
+	envPrefix             = "WEBDAV_PREFIX"
+	envNoAuth             = "WEBDAV_NO_AUTH"
+	envUsername           = "WEBDAV_USERNAME"
+	envPassword           = "WEBDAV_PASSWORD"
+	envOIDCIssuer         = "WEBDAV_OIDC_ISSUER"
+	envOIDCClientID       = "WEBDAV_OIDC_CLIENT_ID"
+	envOIDCClientSecret   = "WEBDAV_OIDC_CLIENT_SECRET"
+	envOIDCRedirectURL    = "WEBDAV_OIDC_REDIRECT_URL"
+	envEmailWhitelist     = "WEBDAV_EMAIL_WHITELIST"
+	envIDWhitelist        = "WEBDAV_ID_WHITELIST"
+	envSSOSessionExpireIn = "WEBDAV_SSO_SESSION_EXPIRE_IN"
 )
+
+const defaultSessionDuration = 7 * 24 * time.Hour
 
 type config struct {
 	dir              string
@@ -35,6 +39,7 @@ type config struct {
 	oidcRedirectURL  string
 	emailWhitelist   string
 	idWhitelist      string
+	sessionDuration  time.Duration
 }
 
 func loadConfig() (config, error) {
@@ -50,10 +55,18 @@ func loadConfig() (config, error) {
 		oidcRedirectURL:  os.Getenv(envOIDCRedirectURL),
 		emailWhitelist:   os.Getenv(envEmailWhitelist),
 		idWhitelist:      os.Getenv(envIDWhitelist),
+		sessionDuration:  defaultSessionDuration,
 	}
 
 	if cfg.dir == "" {
 		return config{}, fmt.Errorf("%s environment variable is required", envDir)
+	}
+	if value := strings.TrimSpace(os.Getenv(envSSOSessionExpireIn)); value != "" {
+		duration, err := time.ParseDuration(value)
+		if err != nil || duration <= 0 {
+			return config{}, fmt.Errorf("%s must be a positive Go duration (for example, 168h)", envSSOSessionExpireIn)
+		}
+		cfg.sessionDuration = duration
 	}
 
 	prefix := strings.TrimSpace(os.Getenv(envPrefix))

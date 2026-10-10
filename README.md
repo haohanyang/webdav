@@ -17,6 +17,7 @@ A minimal WebDAV server.
 | `WEBDAV_DIR`                | **(Required)** Path to the directory to serve                         |
 | `WEBDAV_PORT`               | Port to listen on (default: `8080`)                                   |
 | `WEBDAV_PREFIX`             | URL path prefix for WebDAV (default: `dav`; e.g. `/dav/movie.mp4`)    |
+| `WEBDAV_SSO_SESSION_EXPIRE_IN` | SSO session lifetime as a Go duration (default: `168h`, one week) |
 | `WEBDAV_NO_AUTH`            | Set to any value to disable authentication                            |
 | `WEBDAV_USERNAME`           | Basic auth username                                                   |
 | `WEBDAV_PASSWORD`           | Basic auth password                                                   |

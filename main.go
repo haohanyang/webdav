@@ -116,7 +116,6 @@ func serveIndex(w http.ResponseWriter, r *http.Request, fsRoot, fsPath, displayP
 
 const (
 	sessionCookieName = "webdav_session"
-	sessionDuration   = 24 * time.Hour
 )
 
 type sessionData struct {
@@ -130,12 +129,13 @@ type sessionData struct {
 }
 
 type sessionStore struct {
-	mu   sync.RWMutex
-	data map[string]sessionData
+	mu       sync.RWMutex
+	data     map[string]sessionData
+	duration time.Duration
 }
 
-func newSessionStore() *sessionStore {
-	return &sessionStore{data: make(map[string]sessionData)}
+func newSessionStore(duration time.Duration) *sessionStore {
+	return &sessionStore{data: make(map[string]sessionData), duration: duration}
 }
 
 func (s *sessionStore) create(id, email, name, picture, idToken string) string {
@@ -143,7 +143,7 @@ func (s *sessionStore) create(id, email, name, picture, idToken string) string {
 	rand.Read(b)
 	token := base64.URLEncoding.EncodeToString(b)
 	s.mu.Lock()
-	s.data[token] = sessionData{Id: id, Email: email, Name: name, Picture: picture, IDToken: idToken, Expires: time.Now().Add(sessionDuration)}
+	s.data[token] = sessionData{Id: id, Email: email, Name: name, Picture: picture, IDToken: idToken, Expires: time.Now().Add(s.duration)}
 	s.mu.Unlock()
 	return token
 }
@@ -163,7 +163,7 @@ func (s *sessionStore) createBasic(username string) string {
 	rand.Read(b)
 	token := base64.URLEncoding.EncodeToString(b)
 	s.mu.Lock()
-	s.data[token] = sessionData{Id: username, Name: username, IsBasicAuth: true, Expires: time.Now().Add(sessionDuration)}
+	s.data[token] = sessionData{Id: username, Name: username, IsBasicAuth: true, Expires: time.Now().Add(s.duration)}
 	s.mu.Unlock()
 	return token
 }
@@ -364,7 +364,7 @@ func (cfg *appConfig) handleCallback(w http.ResponseWriter, r *http.Request) {
 		Value:    sessionToken,
 		Path:     "/",
 		HttpOnly: true,
-		MaxAge:   int(sessionDuration.Seconds()),
+		MaxAge:   int(cfg.sessions.duration.Seconds()),
 	})
 
 	next := "/"
@@ -424,7 +424,7 @@ func (cfg *appConfig) handleBasicSignIn(w http.ResponseWriter, r *http.Request) 
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
-		MaxAge:   int(sessionDuration.Seconds()),
+		MaxAge:   int(cfg.sessions.duration.Seconds()),
 	})
 	next := "/"
 	if c, err := r.Cookie("oauth_next"); err == nil && strings.HasPrefix(c.Value, "/") {
@@ -514,7 +514,7 @@ func main() {
 			log.Fatalf("Failed to initialize OIDC provider: %v", err)
 		}
 		cfg.oidcProvider = provider
-		cfg.sessions = newSessionStore()
+		cfg.sessions = newSessionStore(envCfg.sessionDuration)
 	}
 
 	webdavHandler := &webdav.Handler{
