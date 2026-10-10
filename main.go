@@ -538,6 +538,13 @@ func main() {
 		}
 	}
 
+	// Keep static assets outside the auth middleware so browser asset requests
+	// cannot replace the user's saved post-login destination.
+	http.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir("assets"))))
+	http.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/assets/icon.png", http.StatusFound)
+	})
+
 	http.HandleFunc("/", cfg.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" {
 			http.Redirect(w, r, prefixPath, http.StatusFound)
